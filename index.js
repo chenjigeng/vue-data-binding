@@ -98,25 +98,7 @@ class Watcher {
     // 在这个过程中，由于会调用observer对象属性的getter方法，因此在遍历过程中这些对象属性的发布者就将watcher添加到订阅者队列里。
     // 因此，当这一过程中的某一对象属性发生变化的时候，则会触发watcher的update方法
     Dep.target = this;
-
-    /* 解析keys，比如，用户可以传入
-    *  let data = {
-    *    name: 'cjg',
-    *    obj: {
-    *      name: 'zht',
-    *    },
-    *  };
-    *  new Watcher(data, 'obj.name', (oldValue, newValue) => {
-    *    console.log(oldValue, newValue);
-    *  })
-    *  这个时候，我们需要将keys解析为data[obj][name]的形式来获取目标值
-    */
-    const keys = this.keys.split('.');
-    let value = this.vm;
-    keys.forEach(_key => {
-      value = value[_key];
-    });
-    this.value = value;
+    this.value = CompileUtils.parse(this.vm, this.keys);
     Dep.target = null;
     return this.value;
   }
@@ -130,26 +112,154 @@ class Watcher {
   }
 }
 
-// example
-let data = {
-  name: 'cjg',
-  obj: {
-    name: 'zht',
+class MVVM {
+  constructor({
+    data,
+    el,
+  }) {
+    this.data = data;
+    this.el = el;
+    this.init();
+    this.initDom();
+  }
+
+  init() {
+    new Observer(this.data);
+    this.$el = this.isElementNode(this.el) ? this.el : document.querySelector(this.el);
+    for (let key in this.data) {
+      this.defineReactive(key);
+    }
+  }
+
+  initDom() {
+    const fragment = document.createDocumentFragment();
+    let firstChild;
+    while(firstChild = this.$el.firstChild) {
+      fragment.appendChild(firstChild);
+    }
+    console.log(fragment);
+    this.compile(fragment);
+    document.body.appendChild(fragment);
+  }
+  // 将this.data的属性都绑定到this上，这样用户就可以直接通过this.xxx来访问this.data.xxx的值
+  defineReactive(key) {
+    Object.defineProperty(this, key, {
+      get() {
+        return this.data[key];
+      },
+      set(newVal) {
+        this.data[key] = newVal;
+      }
+    })
+  }
+
+  compile(node) {
+    const reg = /\{\{(.+)\}\}/;
+    if (this.isElementNode(node)) {
+      const attrs = node.attributes;
+      Array.prototype.forEach.call(attrs, (attr) => {
+        if (this.isDirective(attr)) {
+          CompileUtils.compileModelAttr(this.data, node, attr)
+        }
+        console.log(attr);
+      })
+    } else if (this.isTextNode(node)) {
+      let textContent = node.textContent;
+      if (reg.test(textContent)) {
+        const matchContent = textContent.match(reg)[0];
+        const matchKeys = textContent.match(reg)[1].trim();
+        CompileUtils.compileTextNode(this.data, node, matchContent, matchKeys)
+      }
+      console.log(node);
+    }
+    
+    if (node.childNodes && node.childNodes.length > 0) {
+      Array.prototype.forEach.call(node.childNodes, (child) => {
+        this.compile(child);
+      })
+    }
+    // while(firstChild = node.firstChild) {
+    //   console.log(firstChild);
+    // }
+  }
+  
+  // 是否是属性节点
+  isElementNode(node) {
+    return node.nodeType === 1;
+  }
+
+  isTextNode(node) {
+    return node.nodeType === 3;
+  }
+
+  isAttrs(node) {
+    return node.nodeType === 2;
+  }
+
+  isDirective(attr) {
+    return attr.nodeName.indexOf('v-') >= 0;
+  }
+
+}
+
+const CompileUtils = {
+  compileTextNode(vm, node, matchContent, keys) {
+    const val = this.getModelValue(vm, keys);
+    const rawTextContent = node.textContent;
+    node.textContent = rawTextContent.replace(matchContent, val);
+    new Watcher(vm, keys, (oldVal, newVal) => {
+      node.textContent = rawTextContent.replace(matchContent, newVal);
+    });
   },
-};
+  compileModelAttr(vm, node, attr) {
+    const { value: keys, nodeName } = attr;
+    node.value = this.getModelValue(vm, keys);
+    node.removeAttribute(nodeName);
+    new Watcher(vm, keys, (oldVal, newVal) => {
+      node.value = newVal;
+    });
+    node.addEventListener('input', (e) => {
+      this.setModelValue(vm, keys, e.target.value);
+    });
+  },
+  /* 解析keys，比如，用户可以传入
+  *  let data = {
+  *    name: 'cjg',
+  *    obj: {
+  *      name: 'zht',
+  *    },
+  *  };
+  *  new Watcher(data, 'obj.name', (oldValue, newValue) => {
+  *    console.log(oldValue, newValue);
+  *  })
+  *  这个时候，我们需要将keys解析为data[obj][name]的形式来获取目标值
+  */
+  parse(vm, keys) {
+    keys = keys.split('.');
+    let value = vm;
+    keys.forEach(_key => {
+      value = value[_key];
+    });
+    return value;
+  },
+  getModelValue(vm, keys) {
+    return this.parse(vm, keys);
+  },
+  setModelValue(vm, keys, val) {
+    keys = keys.split('.');
+    let value = vm;
+    for(let i = 0; i < keys.length - 1; i++) {
+      value = value[keys[i]];
+    }
+    value[keys[keys.length - 1]] = val;
+  },
+}
 
-new Observer(data);
-// 监听data对象的name属性，当data.name发现变化的时候，触发cb函数
-new Watcher(data, 'name', (oldValue, newValue) => {
-  console.log(oldValue, newValue);
-})
-
-data.name = 'zht';
-
-// 监听data对象的obj.name属性，当data.obj.name发现变化的时候，触发cb函数
-new Watcher(data, 'obj.name', (oldValue, newValue) => {
-  console.log(oldValue, newValue);
-})
-
-data.obj.name = 'cwc';
-data.obj.name = 'dmh';
+{/* <div id='app'>
+    <input id='1' v-model='text'/>
+    <span>asdas {{ text }} asd asd </span>
+    asd {{ text }}
+    <br />
+    <input v-model='name' />
+    asd {{ name }}
+  </div> */}
