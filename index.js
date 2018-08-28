@@ -154,7 +154,7 @@ class MVVM {
   }
 
   compile(node) {
-    const reg = /\{\{(.+)\}\}/;
+    const textReg = /\{\{\s*\w+\s*\}\}/gi; // 检测{{name}}语法
     if (this.isElementNode(node)) {
       const attrs = node.attributes;
       Array.prototype.forEach.call(attrs, (attr) => {
@@ -165,10 +165,11 @@ class MVVM {
       })
     } else if (this.isTextNode(node)) {
       let textContent = node.textContent;
-      if (reg.test(textContent)) {
-        const matchContent = textContent.match(reg)[0];
-        const matchKeys = textContent.match(reg)[1].trim();
-        CompileUtils.compileTextNode(this.data, node, matchContent, matchKeys)
+      if (textReg.test(textContent)) {
+        // 对于 "test{{test}} {{name}}"这种文本，可能在一个文本节点会出现多个匹配符，因此得对他们统一进行处理
+        // 使用 textReg来对文本节点进行匹配，可以得到["{{test}}", "{{name}}"]两个匹配值
+        const matchs = textContent.match(textReg);
+        CompileUtils.compileTextNode(this.data, node, matchs);
       }
       console.log(node);
     }
@@ -203,13 +204,25 @@ class MVVM {
 }
 
 const CompileUtils = {
-  compileTextNode(vm, node, matchContent, keys) {
-    const val = this.getModelValue(vm, keys);
+  reg: /\{\{\s*(\w+)\s*\}\}/,
+  compileTextNode(vm, node, matchs) {
     const rawTextContent = node.textContent;
-    node.textContent = rawTextContent.replace(matchContent, val);
-    new Watcher(vm, keys, (oldVal, newVal) => {
-      node.textContent = rawTextContent.replace(matchContent, newVal);
+    matchs.forEach((match) => {
+      const keys = match.match(this.reg)[1];
+      console.log(rawTextContent);
+      new Watcher(vm, keys, () => this.updateTextNode(vm, node, matchs, rawTextContent));
     });
+    this.updateTextNode(vm, node, matchs, rawTextContent);
+  },
+  updateTextNode(vm, node, matchs, rawTextContent) {
+    console.log(rawTextContent);
+    let newTextContent = rawTextContent;
+    matchs.forEach((match) => {
+      const keys = match.match(this.reg)[1];
+      const val = this.getModelValue(vm, keys);
+      newTextContent = newTextContent.replace(match, val);
+    })
+    node.textContent = newTextContent;
   },
   compileModelAttr(vm, node, attr) {
     const { value: keys, nodeName } = attr;
